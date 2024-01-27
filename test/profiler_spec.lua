@@ -22,13 +22,21 @@ describe("runcall", function()
   end)
 
   it("opts: logfile", function()
+    local logfile = vim.fn.tempname() .. ".test"
+
     local opts  ---@type profiler.opts
-    opts = { logfile = "/tmp/profiling-2.log" }
+    opts = { logfile = logfile }
 
     profiler.runcall(function() end, opts)
-    assert.equal("/tmp/profiling-2.log", profiler._state.logfile)
+    assert.equal(logfile, profiler._state.logfile)
   end)
 
+  it("opts: flamegraph", function()
+    local opts  ---@type profiler.opts
+    opts = { flamegraph = true }
+
+    profiler.runcall(function() end, opts)
+  end)
 end)
 
 describe("LuaProfile command", function()

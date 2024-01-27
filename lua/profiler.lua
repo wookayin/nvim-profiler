@@ -12,14 +12,17 @@ local p = require("jit.p")  -- $VIMRUNTIME/lua/jit/p.lua
 local state = {
   started = false, ---@type boolean
   elapsed = nil, ---@type number? elapsed time (ms) for the last session.
-  logfile = nil,
   start_time = nil, ---@type number unit: ms
+  logfile = nil, ---@type string?
+  flamegraph = nil, ---@type string?
 }
 -- for testing
 M._state = state
 
 local uv = vim.uv or vim.loop or error("vim.uv does not exist")
 
+
+M.utils = require("profiler.utils")
 
 function M.echo(msg, level)
   vim.notify(msg, level, { title = 'profiler' })
@@ -46,8 +49,9 @@ function M.reload_builtin_modules()
 end
 
 ---@class profiler.opts
----@field logfile string  -- TODO: open results in a scratch/floating buffer.
----@field stack_depth integer
+---@field logfile string?
+---@field flamegraph boolean|string?
+---@field stack_depth? integer
 
 
 --- Start a new profiling session.
@@ -55,10 +59,18 @@ end
 function M.start(opts)
   opts = opts or {}
   opts = vim.tbl_deep_extend("keep", opts, {
-    logfile = "/tmp/profiling.log",   -- TODO: use tempfile
     stack_depth = 10,
   })
   assert(not state.started, "Already started")
+
+  -- Setup
+  opts.logfile = opts.logfile or M.utils.make_temp_file(".log")
+  if opts.flamegraph == true then
+    if vim.fn.executable("flamegraph") == 0 then
+      error("flamegraph not found on $PATH. Run: `cargo install flamegraph`")
+    end
+    opts.flamegraph = M.utils.make_temp_file(".svg")
+  end
 
   -- See $VIMRUNTIME/lua/jit/p.lua
   -- https://github.com/LuaJIT/LuaJIT/blob/v2.1/src/lj_profile.c
@@ -72,10 +84,12 @@ function M.start(opts)
     -- "a",  -- with annotated source code excerpts
     "m0", -- minimum sample percentage is 0, show all entries
     "i1", -- sample every 1 milliseconds
+    opts.flamegraph and "G" or "",
   }, ",")
   p.start(mode, opts.logfile)
   state.started = true
   state.logfile = opts.logfile
+  state.flamegraph = opts.flamegraph or nil
   state.start_time = uv.hrtime() / 1e6
   M.echo(("Started profiling: %s"):format(state.logfile))
 end
@@ -87,8 +101,21 @@ function M.stop()
   end
   p.stop()
   local elapsed = (uv.hrtime() / 1e6 - state.start_time)  -- in milliseconds
+  local msg_result = ""
 
-  local msg_result = "\n" .. "Run `:LuaProfile result` to see the result."
+  -- flamegraph
+  if state.flamegraph then
+    -- TODO shellescape
+    local shell = ("flamegraph %s > %s"):format(state.logfile, state.flamegraph)
+    local stderr = vim.fn.system(shell)
+    if vim.v.shell_error ~= 0 then
+      error("The flamegraph command has failed: " .. stderr)
+    end
+    msg_result = msg_result .. "\nflamegraph: " .. state.flamegraph
+  end
+
+  -- notification
+  msg_result = msg_result .. "\n" .. "Run `:LuaProfile result` to see the result."
   M.echo(("Stopped profiling (Elapsed: %.3f s): %s" .. msg_result):format(
     elapsed / 1e3, state.logfile)
   )
@@ -122,6 +149,7 @@ function M.runcall(fn, opts)
 
   local info = {
     elapsed = state.elapsed,
+    flamegraph = state.flamegraph,
   }
   return info, vim.F.unpack_len(ret)
 end
@@ -160,16 +188,30 @@ function M.run(opts) -- TODO change name
     M.reload_builtin_modules()
   end
 
-  M.start()
+  M.start(opts)
   vim.defer_fn(function()
     if not state.started then
       return  -- probably canceled
     end
     M.stop()
     if opts.open_result then
-      vim.cmd [[ tabnew /tmp/profiling.log ]]
+      M.open_result()
     end
   end, opts.duration)
+end
+
+function M.open_result()
+  if not state.logfile then
+    return vim.api.nvim_err_writeln("No profiling was run.")
+  end
+
+  -- see :LuaProfile result
+  if state.flamegraph and type(state.flamegraph) == "string" then
+    print("Opening: " .. state.flamegraph)
+    M.utils.open(state.flamegraph --[[@as string]])
+  else
+    vim.cmd.tabnew(state.logfile)
+  end
 end
 
 return M

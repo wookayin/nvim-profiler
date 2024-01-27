@@ -4,24 +4,31 @@ local cmd = {}
 cmd.LuaProfile = {
   _dispatcher = ...,
   _complete = ...,
-  start = function()
-    require("profiler").start()
+  start = function(opts_str)
+    local opts = {}
+    if opts_str == "--flamegraph" then
+      opts.flamegraph = true
+    end
+    require("profiler").start(opts)
   end,
   stop = function()
     require("profiler").stop()
   end,
   result = function()
-    -- open the result
-    vim.cmd [[ tabnew /tmp/profiling.log ]]
+    require("profiler").open_result()
   end,
-  run = function(duration)
+  run = function(duration, opts_str)
     if duration == nil or tonumber(duration) == nil then
       return vim.api.nvim_err_writeln("Integer argument required: {duration} (ms)")
     end
-    duration = tonumber(duration)
-    require("profiler").run({
-      duration = duration --[[ @as integer ]],
-    })
+
+    local opts = {
+      duration = tonumber(duration),
+    }
+    if opts_str == "--flamegraph" then
+      opts.flamegraph = true
+    end
+    require("profiler").run(opts)
   end,
 }
 
