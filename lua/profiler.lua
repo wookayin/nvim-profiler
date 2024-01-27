@@ -15,6 +15,8 @@ local state = {
   logfile = nil,
   start_time = nil, ---@type number unit: ms
 }
+-- for testing
+M._state = state
 
 local uv = vim.uv or vim.loop or error("vim.uv does not exist")
 
