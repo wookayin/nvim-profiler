@@ -8,10 +8,12 @@ assert(20199 == jit.version_num,
   ". Please upgrade your neovim to v0.9.2 or higher.")
 
 local p = require("jit.p")  -- $VIMRUNTIME/lua/jit/p.lua
+
 local state = {
-  started = false,
+  started = false, ---@type boolean
+  elapsed = nil, ---@type number? elapsed time (ms) for the last session.
   logfile = nil,
-  start_time = nil,
+  start_time = nil, ---@type number unit: ms
 }
 
 local uv = vim.uv or vim.loop or error("vim.uv does not exist")
@@ -72,7 +74,7 @@ function M.start(opts)
   p.start(mode, opts.logfile)
   state.started = true
   state.logfile = opts.logfile
-  state.start_time = uv.hrtime()
+  state.start_time = uv.hrtime() / 1e6
   M.echo(("Started profiling: %s"):format(state.logfile))
 end
 
@@ -82,19 +84,25 @@ function M.stop()
     error("Profiler is not running.")
   end
   p.stop()
-  local elapsed = (uv.hrtime() - state.start_time) / 1e9   -- in seconds
+  local elapsed = (uv.hrtime() / 1e6 - state.start_time)  -- in milliseconds
 
   local msg_result = "\n" .. "Run `:LuaProfile result` to see the result."
-  M.echo(("Stopped profiling (Elapsed: %.3f s): %s" .. msg_result):format(elapsed, state.logfile))
+  M.echo(("Stopped profiling (Elapsed: %.3f s): %s" .. msg_result):format(
+    elapsed / 1e3, state.logfile)
+  )
   state.started = false
+  state.elapsed = elapsed
 end
+
+--TODO: LuaCATS does not support variadic generic yet. LuaLS/lua-language-server#1861
 
 ---Execute a function {fn} with profiling enabled.
 ---
----@generic R
----@param fn fun(): R
+---@generic R: ...
+---@param fn fun(): R?, ...?
 ---@param opts profiler.opts?
----@return R
+---@return table information for profiling
+---@return R original return value of the underlying function
 function M.runcall(fn, opts)
   M.start(opts)
   local ret
@@ -109,15 +117,19 @@ function M.runcall(fn, opts)
   if not ok then
     error(ret)
   end
-  return vim.F.unpack_len(ret)
+
+  local info = {
+    elapsed = state.elapsed,
+  }
+  return info, vim.F.unpack_len(ret)
 end
 
 ---Wrap a function to enable profiling around its execution.
 ---
 ---@generic P, R
----@param fn fun(...: P): R
+---@param fn fun(...: P): R?, ...?
 ---@param opts profiler.opts?
----@return fun(...: P): R
+---@return fun(...: P): R, ...
 function M.wrap(fn, opts)
   return function(...)
     local args = vim.F.pack_len(...)
